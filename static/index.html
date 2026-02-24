@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tomato Leaf Disease Detector</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <h1>Tomato Leaf Disease Detector</h1>
+        <p>Chụp hoặc chọn ảnh lá cà chua để phát hiện bệnh.</p>
+      </header>
+
+      <main class="app-main">
+        <section class="upload-card">
+          <div class="upload-actions">
+            <label class="btn primary">
+              Chọn / chụp ảnh
+              <input
+                type="file"
+                id="file-input"
+                accept="image/*"
+                capture="environment"
+                hidden
+              />
+            </label>
+          </div>
+
+          <div class="preview" id="preview-container">
+            <p class="placeholder">Chưa có ảnh. Hãy chọn hoặc chụp một ảnh lá.</p>
+            <img id="preview-image" alt="Preview" />
+          </div>
+
+          <button id="detect-btn" class="btn secondary" disabled>
+            Phát hiện bệnh
+          </button>
+        </section>
+
+        <section class="result-card">
+          <h2>Kết quả</h2>
+          <div id="result-status" class="status">Chưa có kết quả.</div>
+          <ul id="result-list" class="result-list"></ul>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <small>Server: <span id="server-status">đang kiểm tra...</span></small>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+

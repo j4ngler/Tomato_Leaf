@@ -1,0 +1,19 @@
+venv/
+__pycache__/
+*.pyc
+
+# Ultralytics / YOLO outputs
+runs/
+
+# Large datasets - không đẩy lên Git
+PlantVillage/
+dataset/
+dataset_enriched_6000/
+dataset_detection/
+dataset_detection_hub/
+
+# Tệp nén lớn
+*.zip
+
+.DS_Store
+Thumbs.db

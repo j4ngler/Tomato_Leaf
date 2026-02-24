@@ -1,0 +1,19 @@
+# Object detection — cấu trúc YOLO
+# QUAN TRỌNG khi dùng Ultralytics Hub:
+#   - Hub không đọc được đường dẫn local (path: ..). Bạn phải UPLOAD dataset lên Hub (Upload Dataset / kéo thả zip).
+#   - Sau khi upload, Hub tự gán path; không cần sửa path trong file này khi train trên Hub (chọn dataset từ Hub).
+# Khi train LOCAL (máy mình), đặt path trỏ tới thư mục chứa train/valid/test (ví dụ dataset_detection).
+path: dataset_detection
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 3
+names: ['Early_blight', 'Bacterial_spot', 'Yellow_Leaf_Curl_Virus']
+
+roboflow:
+  workspace: your-workspace
+  project: tomato-leaf
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/your-workspace/tomato-leaf/dataset/1
