@@ -9,7 +9,7 @@ from ultralytics import YOLO
 
 
 # Đường dẫn tới model YOLO đã train.
-# TODO: sửa lại cho đúng file của bạn, ví dụ: "runs/detect/train/weights/best.pt"
+# Model đã được copy vào cùng thư mục dự án backend.
 MODEL_PATH = "best.pt"
 
 # Tên lớp theo đúng thứ tự khi train model
