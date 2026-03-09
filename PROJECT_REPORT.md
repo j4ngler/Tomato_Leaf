@@ -42,16 +42,51 @@ Nhờ đó, mỗi bệnh có số lượng ảnh tương đương nhau, và mô 
 
 ### 2.3. Chuẩn hóa cấu trúc dữ liệu cho mô hình AI
 
-Mô hình nhận diện được sử sử dụng thuộc họ **YOLO**, vốn yêu cầu dữ liệu được sắp xếp theo cấu trúc nhất định. Dự án đã:
+Mô hình nhận diện được sử sử dụng thuộc họ **YOLO**, vốn yêu cầu dữ liệu được sắp xếp theo cấu trúc và nhãn đặc biệt. Dự án tổ chức dữ liệu theo hai tầng:
 
-- Tự động **chia dữ liệu thành ba phần**: ảnh dùng để huấn luyện, ảnh dùng để kiểm tra trong quá trình huấn luyện, và ảnh dùng để đánh giá cuối cùng.
-- Sắp xếp lại toàn bộ thư mục ảnh theo đúng cấu trúc mà mô hình cần.
-- Gắn kèm các thông tin mô tả để hệ thống biết:
-  - Ảnh nằm ở đâu.
-  - Có bao nhiêu loại bệnh.
-  - Tên từng loại bệnh là gì.
+- **Tầng phân lớp (classification)** để dễ thao tác ban đầu:
 
-Bộ dữ liệu hoàn chỉnh này có tổng cộng khoảng **18.000 ảnh**, được cân bằng giữa ba loại bệnh và sẵn sàng để đưa vào huấn luyện.
+  ```
+  dataset/
+  ├── Early_blight/
+  ├── Bacterial_spot/
+  └── Yellow_Leaf_Curl_Virus/
+  ```
+
+  Tại đây, mỗi ảnh thuộc một trong ba thư mục trên, tương ứng với ba loại bệnh mục tiêu.
+
+- **Tầng phát hiện (object detection) theo chuẩn YOLO**, dùng cho huấn luyện mô hình:
+
+  ```
+  dataset_detection_hub/
+  ├── images/
+  │   ├── train/
+  │   ├── val/
+  │   └── test/
+  ├── labels/
+  │   ├── train/
+  │   ├── val/
+  │   └── test/
+  └── data.yaml
+  ```
+
+  - Mỗi ảnh trong `images/...` có **một file nhãn `.txt` cùng tên** trong `labels/...`.
+  - Mỗi dòng trong file nhãn có dạng: `class_id x_center y_center width height` (tọa độ đã chuẩn hóa về \[0,1\]).
+  - Trong phiên bản hiện tại, mỗi ảnh tương ứng **1 vùng bệnh phủ toàn bộ lá**, nên **số lượng instance bằng đúng số lượng ảnh**.
+
+Dữ liệu được **chia theo tỉ lệ 70% train – 15% val – 15% test** cho từng lớp; sau khi làm giàu lên 6000 ảnh/lớp, ta có:
+
+- **Tổng số ảnh**: ~18.000 (mỗi lớp ~6.000 ảnh).
+- **Mỗi lớp**:
+  - Train: ~4.200 ảnh.
+  - Val: ~900 ảnh.
+  - Test: ~900 ảnh.
+- **Toàn bộ tập**:
+  - Train: ~12.600 ảnh / 12.600 instance.
+  - Val: ~2.700 ảnh / 2.700 instance.
+  - Test: ~2.700 ảnh / 2.700 instance.
+
+Các thông tin về vị trí thư mục, số lớp, tên lớp được mô tả trong file cấu hình `data.yaml` để framework YOLO có thể tự động đọc đúng dữ liệu.
 
 ---
 
@@ -72,24 +107,59 @@ Dự án sử dụng một phiên bản hiện đại và gọn nhẹ của YOLO
 
 ### 3.2. Quy trình huấn luyện
 
-Trên bộ dữ liệu đã được chuẩn hóa, mô hình được huấn luyện với các thiết lập:
+Trên bộ dữ liệu đã được chuẩn hóa và chia tách, mô hình được huấn luyện với quy trình và thiết lập chính như sau:
 
-- Ảnh đầu vào được **chuẩn hóa kích thước** về cùng một độ phân giải.
-- Trong quá trình học, ảnh tiếp tục được **biến đổi ngẫu nhiên** (ví dụ xoay nhẹ, thay đổi ánh sáng) để mô hình học được nhiều tình huống khác nhau.
-- Dữ liệu được chia thành:
-  - Phần dùng để mô hình học.
-  - Phần dùng để kiểm tra mô hình sau mỗi vòng lặp nhằm tránh quá khớp.
+- **Chuẩn hóa ảnh đầu vào**:
+  - Tất cả ảnh được resize về một độ phân giải cố định (ví dụ 640×640) trước khi đưa vào mạng.
+  - Kênh màu được chuẩn hóa về không gian RGB.
 
-Một số tham số quan trọng như số vòng lặp huấn luyện, kích thước lô dữ liệu, kích thước ảnh… được lựa chọn sao cho **phù hợp với giới hạn bộ nhớ** nhưng vẫn tận dụng tối đa khả năng của GPU.
+- **Chia tập huấn luyện/kiểm định/kiểm tra**:
+  - Train: ~70% số ảnh của từng lớp (dùng để cập nhật trọng số).
+  - Validation: ~15% (dùng để theo dõi quá trình học, phát hiện overfitting).
+  - Test: ~15% (chỉ dùng để đánh giá cuối cùng).
+
+- **Làm giàu dữ liệu trong lúc train (online augmentation)**:
+  - Xoay nhẹ, lật ngang/dọc.
+  - Cắt lại khung hình, zoom in/out.
+  - Thay đổi độ sáng, độ tương phản, màu sắc, làm mờ nhẹ.
+  - Những biến đổi này được áp dụng ngẫu nhiên cho từng batch, giúp mô hình **ít bị phụ thuộc** vào một điều kiện chụp cụ thể.
+
+- **Một số siêu tham số (hyperparameter) chính**  
+  (dựa trên cấu hình mặc định của Ultralytics YOLO, điều chỉnh cho phù hợp GPU tầm trung):
+  - **Batch size**: khoảng 16–32 ảnh/batch, tùy dung lượng bộ nhớ GPU.
+  - **Số epoch**: 50–100 vòng lặp qua toàn bộ tập train, dừng sớm nếu validation không còn cải thiện.
+  - **Kích thước ảnh (imgsz)**: 640×640.
+  - **Tối ưu hóa**: SGD hoặc AdamW với:
+    - Learning rate khởi điểm khoảng 0,01 (kèm lịch giảm LR theo cosine).
+    - Momentum ~0,9.
+    - Weight decay cỡ 5e-4 để giảm overfitting.
+  - **Early stopping**: dừng huấn luyện nếu metric trên tập validation không được cải thiện sau một số epoch liên tiếp.
+
+Nhờ lựa chọn cấu hình vừa phải và sử dụng GPU tầm trung, thời gian huấn luyện vẫn nằm trong giới hạn chấp nhận được, đồng thời mô hình đạt được mức độ chính xác đủ tốt để đưa vào triển khai thực tế.
 
 ### 3.3. Kết quả huấn luyện
 
-Kết quả của quá trình huấn luyện là:
+Sau khi huấn luyện, mô hình được **đánh giá trên tập test (~2.700 ảnh, mỗi lớp 900 ảnh)**. Công cụ Ultralytics sinh ra một bảng kết quả tóm tắt theo từng lớp bệnh, bao gồm:
 
-- Một **mô hình đã học cách phân biệt ba bệnh** trên lá cà chua.
-- Một bộ các chỉ số đánh giá (độ chính xác, khả năng nhận diện đúng loại bệnh, v.v.) dùng để so sánh và cải thiện trong các lần huấn luyện tiếp theo.
+- **Precision (P)**: tỷ lệ dự đoán bệnh đúng trên tổng số dự đoán bệnh.
+- **Recall (R)**: tỷ lệ phát hiện đúng trên tổng số vùng bệnh thực tế.
+- **mAP@0.5**: mean Average Precision tại ngưỡng IoU 0,5.
+- **mAP@0.5:0.95**: mAP trung bình trên nhiều ngưỡng IoU (từ 0,5 đến 0,95).
 
-Mô hình tốt nhất thu được sẽ được lưu lại và sử dụng trong các bước triển khai tiếp theo.
+Bảng sau là kết quả tiêu biểu thu được (trích từ log chạy validate):
+
+| Lớp bệnh               | Số ảnh | Số instance | Precision (P) | Recall (R) | mAP@0.5 | mAP@0.5:0.95 |
+|------------------------|:------:|:-----------:|:-------------:|:----------:|:-------:|:-------------:|
+| Early_blight           |  900   |    900      |     0.999     |   0.999    |  0.999  |     0.995     |
+| Bacterial_spot         |  900   |    900      |     0.999     |   0.999    |  0.999  |     0.995     |
+| Yellow_Leaf_Curl_Virus |  900   |    900      |     0.999     |   0.999    |  0.999  |     0.995     |
+
+Có thể thấy mô hình đạt **độ chính xác và khả năng bao phủ rất cao** trên cả ba lớp bệnh, với mAP@0.5 xấp xỉ 0,999 và mAP@0.5:0.95 khoảng 0,995. Điều này cho thấy:
+
+- Mô hình phân biệt tốt giữa ba loại bệnh trong bối cảnh dữ liệu đã chuẩn bị.
+- Độ tin cậy của các dự đoán cao, phù hợp để triển khai trong ứng dụng thực tế, đồng thời vẫn còn dư địa tinh chỉnh thêm nếu mở rộng sang nhiều loại bệnh hoặc điều kiện chụp đa dạng hơn.
+
+Mô hình tốt nhất (best checkpoint) thu được từ quá trình huấn luyện được lưu lại và dùng làm **mô hình chính** trong dịch vụ AI của hệ thống.
 
 ---
 
@@ -118,110 +188,3 @@ Các chức năng chính của dịch vụ gồm:
 Nhờ đó, các ứng dụng bên ngoài (web, di động) chỉ cần gửi ảnh và đọc kết quả, không cần triển khai mô hình phức tạp trên thiết bị của mình.
 
 ---
-
-## 5. Giao diện web cho người dùng
-
-### 5.1. Mục tiêu
-
-Giao diện web được thiết kế để:
-
-- Người dùng trên máy tính hoặc trình duyệt điện thoại **có thể sử dụng ngay lập tức** mà không cần cài đặt gì thêm.
-- Trình bày thông tin trực quan, thân thiện, phù hợp với người dùng không chuyên về AI.
-
-### 5.2. Trải nghiệm sử dụng
-
-Khi truy cập vào trang web, người dùng có thể:
-
-1. **Chọn một bức ảnh** lá cà chua từ máy tính, hoặc **chụp ảnh mới** nếu thiết bị có camera.
-2. Xem ảnh xem trước trên màn hình để đảm bảo ảnh đủ rõ nét.
-3. Nhấn nút để yêu cầu hệ thống **phân tích bệnh**.
-4. Nhận kết quả dưới dạng:
-   - Danh sách các bệnh được phát hiện (nếu có).
-   - Mức độ tin cậy tương ứng cho từng bệnh.
-   - Thông điệp hướng dẫn nếu hệ thống không tìm thấy vùng bệnh rõ ràng (ví dụ đề nghị chụp gần hơn, rõ hơn).
-
-Giao diện sử dụng phong cách hiện đại, tông màu tối, tối ưu cho cả màn hình lớn và nhỏ, giúp việc sử dụng trở nên trực quan và dễ chịu.
-
----
-
-## 6. Ứng dụng di động cho người trồng
-
-### 6.1. Vai trò của ứng dụng di động
-
-Ứng dụng di động giúp người trồng **không cần mở máy tính** mà vẫn có thể sử dụng hệ thống. Điện thoại đóng hai vai trò:
-
-- Là **camera** để chụp ảnh lá.
-- Là **màn hình hiển thị kết quả**.
-
-Mọi tính toán nặng nề vẫn diễn ra trên máy chủ, điện thoại chỉ gửi ảnh và nhận kết quả.
-
-### 6.2. Quy trình sử dụng
-
-Quy trình điển hình như sau:
-
-1. Máy tính trong trang trại hoặc văn phòng kỹ thuật **chạy sẵn dịch vụ AI**.
-2. Điện thoại cài ứng dụng và **kết nối cùng mạng WiFi** với máy tính đó.
-3. Trong ứng dụng, người dùng khai báo địa chỉ máy chủ (địa chỉ IP trong mạng nội bộ).
-4. Khi cần chẩn đoán:
-   - Mở ứng dụng, camera sẽ bật toàn màn hình.
-   - Hướng camera vào lá cà chua và chụp ảnh.
-   - Ứng dụng tự động gửi ảnh lên máy chủ và chờ kết quả.
-   - Kết quả hiển thị trên màn hình dưới dạng:
-     - Tên bệnh.
-     - Mức độ tin cậy.
-     - Mô tả ngắn gọn về từng bệnh, giúp người dùng hiểu rõ hơn.
-
-Nhờ cách thiết kế này, người dùng cuối chỉ cần **một chiếc điện thoại phổ thông**, không cần thiết bị cấu hình cao.
-
----
-
-## 7. Bức tranh tổng thể: từ dữ liệu đến người dùng
-
-Toàn bộ hệ thống có thể tóm tắt theo chuỗi bước sau:
-
-1. **Chuẩn bị dữ liệu**  
-   Thu thập, chọn lọc và làm sạch ảnh lá cà chua; cân bằng số lượng ảnh cho ba loại bệnh; làm giàu dữ liệu bằng các biến đổi.
-
-2. **Chuẩn hóa và huấn luyện mô hình**  
-   Sắp xếp lại dữ liệu theo cấu trúc chuẩn, huấn luyện mô hình nhận diện hiện đại trên GPU, đánh giá và chọn ra phiên bản mô hình tốt nhất.
-
-3. **Đóng gói thành dịch vụ AI**  
-   Đưa mô hình vào một dịch vụ web, có thể nhận ảnh từ bên ngoài, xử lý và trả về kết quả trong thời gian ngắn.
-
-4. **Kết nối với web và ứng dụng di động**  
-   Xây dựng giao diện web và app di động để người dùng có thể tương tác với hệ thống chỉ bằng vài thao tác đơn giản: chụp ảnh → gửi ảnh → xem kết quả.
-
-Nhờ vậy, từ một mô hình AI nghiên cứu thuần túy, dự án đã phát triển thành **một giải pháp hoàn chỉnh**, sẵn sàng hỗ trợ người trồng trong việc theo dõi và phát hiện bệnh trên lá cà chua.
-
----
-
-## 8. Hướng phát triển trong tương lai
-
-Dựa trên nền tảng đã xây dựng, hệ thống có nhiều hướng mở rộng tiềm năng:
-
-1. **Nâng cao độ chi tiết của chẩn đoán**  
-   Thay vì chỉ nhận diện loại bệnh, hệ thống có thể được mở rộng để xác định chính xác vùng bệnh trên lá, giúp người dùng hiểu rõ mức độ lây lan.
-
-2. **Bổ sung kiến thức chuyên môn**  
-   Sau khi phát hiện bệnh, giao diện có thể hiển thị thêm:
-   - Nguyên nhân chủ yếu.
-   - Điều kiện thời tiết và canh tác dễ dẫn tới bệnh.
-   - Gợi ý bước xử lý ban đầu (ở mức tham khảo, không thay thế ý kiến chuyên gia).
-
-3. **Mở rộng sang các loại cây trồng khác**  
-   Quy trình xử lý dữ liệu và huấn luyện hiện tại có thể tái sử dụng cho các cây trồng khác như ớt, khoai tây, lúa…, giúp hệ thống trở thành một “bộ công cụ chẩn đoán bệnh cây trồng” đa năng.
-
-4. **Chạy trực tiếp trên thiết bị di động**  
-   Trong tương lai, có thể nghiên cứu các phiên bản mô hình nhẹ hơn để chạy trực tiếp trên điện thoại hoặc thiết bị cầm tay, giảm phụ thuộc vào máy chủ trung tâm.
-
----
-
-## 9. Kết luận
-
-Dự án đã xây dựng thành công một hệ thống:
-
-- **Hiểu được ba bệnh quan trọng trên lá cà chua** thông qua học sâu.
-- **Đóng gói mô hình thành dịch vụ AI**, có thể tích hợp dễ dàng với các ứng dụng khác.
-- **Cung cấp giao diện web và ứng dụng di động** thân thiện, giúp người trồng chỉ cần chụp ảnh là có thể nhận được gợi ý chẩn đoán bệnh.
-
-Đây là một bước đi cụ thể trong việc đưa trí tuệ nhân tạo tới gần hơn với người làm nông, góp phần xây dựng nền nông nghiệp thông minh, hiệu quả và bền vững.

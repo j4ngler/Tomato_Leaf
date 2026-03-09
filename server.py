@@ -4,12 +4,13 @@ from typing import List, Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from PIL import Image
 from ultralytics import YOLO
 
 
 # Đường dẫn tới model YOLO đã train.
-# Model đã được copy vào cùng thư mục dự án backend.
+# Model trong thư mục dự án (best.pt) hoặc thư mục cha (../best.pt).
 MODEL_PATH = "best.pt"
 
 # Tên lớp theo đúng thứ tự khi train model
@@ -26,8 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve frontend (PC + mobile) từ thư mục static/
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Serve frontend (PC + mobile) từ thư mục static/ tại /static
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def root() -> FileResponse:
+    """Trả về trang index của frontend."""
+    return FileResponse("static/index.html")
 
 
 @app.on_event("startup")
