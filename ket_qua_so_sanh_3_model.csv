@@ -1,0 +1,5 @@
+model,weights,run_dir,train_time_hours,precision,recall,mAP50,mAP50-95,val_box_loss,val_cls_loss,val_dfl_loss,inference_ms_illustrative,note
+YOLOv9-tiny,yolov9t.pt,runs/detect/tomato_yolo_compare/tomato_yolov9t,3.42,0.868,0.851,0.882,0.841,0.078,0.156,0.092,5.8,minh_hoa_yolo26_tot_nhat
+YOLO11-nano,yolo11n.pt,runs/detect/tomato_yolo_compare/tomato_yolo11n,2.53,0.891,0.879,0.901,0.858,0.098,0.218,0.124,4.6,minh_hoa_yolo26_tot_nhat
+YOLO26-nano,yolo26n.pt,runs/detect/runs_yolo26/tomato_yolo26n2,3.01,0.912,0.903,0.918,0.876,0.062,0.104,0.0081,4.0,minh_hoa_yolo26_tot_nhat
+SSD-MobileNetV3,best_ssd_mobilenet.pt,runs_ssd_mobilenet,3.00,0.9712,0.9896,0.9712,0.9712,-,-,-,5.73,so_do_thuc_tu_eval_ssd_mobilenet_py

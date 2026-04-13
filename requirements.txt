@@ -1,4 +1,14 @@
+# Core libs cho YOLO + API
+ultralytics
 fastapi
 uvicorn[standard]
-ultralytics
 Pillow
+python-multipart
+torchmetrics
+faster-coco-eval
+
+# PyTorch stack (cài theo hướng dẫn CUDA trên pytorch.org, KHÔNG bắt buộc ghi version ở đây)
+# torch
+# torchvision
+# torchaudio
+

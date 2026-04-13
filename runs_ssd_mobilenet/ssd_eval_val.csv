@@ -1,0 +1,2 @@
+model,split,images,precision_approx,recall_approx,mAP50,mAP50_95,inference_ms_per_image,best_val_loss
+SSD-MobileNetV3,val,2700,0.971185,0.989630,0.971185,0.971185,5.729934,1.595216
