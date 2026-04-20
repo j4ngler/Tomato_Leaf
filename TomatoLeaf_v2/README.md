@@ -7,6 +7,7 @@ Dashboard điều khiển nhà kính có backend thật (FastAPI) + web UI tiế
 - `web_server.py`: API + phục vụ UI + lấy ảnh dataset và vẽ bounding box.
 - `web_ui/`: giao diện dashboard điều khiển.
 - `camera_control/`: các script ONVIF/PTZ gốc.
+- `models/best.pt`: trọng số YOLO đã huấn luyện (phục vụ suy luận / mở rộng; UI mặc định vẫn có thể dựa trên nhãn YOLO trong dataset).
 
 ## Chạy hệ thống web điều khiển
 

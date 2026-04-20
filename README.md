@@ -9,6 +9,7 @@ Repo gọn chỉ gồm module **TomatoLeaf v2**: dashboard web (FastAPI), giao d
 | `TomatoLeaf_v2/web_server.py` | Backend API + phục vụ static UI |
 | `TomatoLeaf_v2/web_ui/` | HTML/CSS/JS dashboard |
 | `TomatoLeaf_v2/camera_control/` | Script tham khảo: RTSP, PTZ, lịch quay |
+| `TomatoLeaf_v2/models/best.pt` | Trọng số YOLO đã huấn luyện (dùng cho suy luận / script ngoài UI) |
 | `TomatoLeaf_v2/.env.example` | Mẫu biến môi trường (copy thành `.env`) |
 | `requirements.txt` | Phụ thuộc Python để chạy web v2 |
 
@@ -35,5 +36,6 @@ Mở trình duyệt: [http://localhost:5500](http://localhost:5500)
 ## Ghi chú
 
 - Dataset YOLO (bbox) mặc định đọc từ `../dataset_detection` so với thư mục `TomatoLeaf_v2` (cùng cấp với `TomatoLeaf_v2` trong workspace đầy đủ). Nếu chỉ clone nhánh này, cần đặt dataset đúng đường dẫn tương đối hoặc chỉnh trong `web_server.py`.
+- File `TomatoLeaf_v2/models/best.pt` nằm trong repo để bạn chạy suy luận YOLO (ví dụ Ultralytics) hoặc tích hợp sau; dashboard hiện vẫn có thể dùng nhãn có sẵn trong dataset mà không nạp model mỗi request.
 - Luồng RTSP cần `opencv-python-headless` và biến môi trường theo `TomatoLeaf_v2/.env.example`.
 - Thư mục `TomatoLeaf_v2/captures/` (ảnh chụp burst/lịch) được git bỏ qua; không commit file `.env`.
