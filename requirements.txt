@@ -1,0 +1,7 @@
+# Phụ thuộc tối thiểu để chạy TomatoLeaf v2 (FastAPI + UI + camera RTSP tùy chọn)
+fastapi
+uvicorn[standard]
+Pillow
+python-multipart
+pydantic
+opencv-python-headless
