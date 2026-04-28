@@ -18,10 +18,14 @@ const eventLogEl = $("eventLog");
 const applyThresholdsBtn = $("applyThresholds");
 const toastRoot = $("toastRoot");
 const liveImage = $("liveImage");
+const liveVideoDashboard = $("liveVideoDashboard");
+const dashboardCameraFallbackHint = $("dashboardCameraFallbackHint");
+const liveVideoCamera = $("liveVideoCamera");
 const splitSelect = $("splitSelect");
 const frameName = $("frameName");
 const liveImageCamera = $("liveImageCamera");
 const cameraLiveFrame = $("cameraLiveFrame");
+const cameraLivePlaceholder = $("cameraLivePlaceholder");
 const liveImagePtz = $("liveImagePtz");
 const ptzLiveFrame = $("ptzLiveFrame");
 const frameNameCamera = $("frameNameCamera");
@@ -51,6 +55,9 @@ let cameraSource = "dataset";
 let rtspStreamReady = false;
 /** URL frame dataset mới nhất (đồng bộ PTZ khi không dùng RTSP) */
 let lastDatasetFrameUrl = "";
+let dashboardWebcamStream = null;
+let usingWebcamFallback = false;
+let lastCameraNoticeMode = "";
 const RTSP_STREAM_URL = "/api/camera/rtsp/stream.mjpg";
 const RTSP_SNAPSHOT_URL = "/api/camera/rtsp/snapshot.jpg";
 const THEME_KEY = "tomatoleaf-theme";
@@ -167,6 +174,7 @@ function activatePage(pageId) {
   menuItems.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
+  void syncDashboardCameraPreview();
   syncLiveVideoForCurrentSource();
   resyncPtzPreview();
 }
@@ -214,6 +222,7 @@ function setPtzPreviewReady(ready) {
 
 function syncLiveVideoForCurrentSource() {
   if (cameraSource !== "rtsp") return;
+  if (!rtspStreamReady) return;
   if (liveImage) liveImage.src = RTSP_STREAM_URL;
   if (liveImageCamera) {
     setCameraLiveStreamReady(false);
@@ -235,10 +244,243 @@ function syncLiveVideoForCurrentSource() {
   }
 }
 
+function stopDashboardWebcam() {
+  if (!dashboardWebcamStream) return;
+  dashboardWebcamStream.getTracks().forEach((track) => track.stop());
+  dashboardWebcamStream = null;
+  usingWebcamFallback = false;
+  if (liveVideoDashboard) {
+    liveVideoDashboard.srcObject = null;
+    liveVideoDashboard.style.display = "none";
+  }
+  if (liveVideoCamera) {
+    liveVideoCamera.srcObject = null;
+    liveVideoCamera.style.display = "none";
+  }
+}
+
+function setDashboardHint(message = "") {
+  if (!dashboardCameraFallbackHint) return;
+  dashboardCameraFallbackHint.textContent = message;
+  dashboardCameraFallbackHint.style.display = message ? "flex" : "none";
+}
+
+function setCameraLiveHint(message = "") {
+  if (!cameraLivePlaceholder) return;
+  cameraLivePlaceholder.textContent = message || "Kết nối camera…";
+}
+
+function notifyCameraMode(mode, message, variant = "success") {
+  if (lastCameraNoticeMode === mode) return;
+  lastCameraNoticeMode = mode;
+  showToast(message, variant);
+}
+
+async function startDashboardWebcam() {
+  if (!liveVideoDashboard && !liveVideoCamera) return false;
+  if (!navigator.mediaDevices?.getUserMedia) return false;
+  if (!dashboardWebcamStream) {
+    dashboardWebcamStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false,
+    });
+  }
+  if (liveVideoDashboard) {
+    liveVideoDashboard.srcObject = dashboardWebcamStream;
+    liveVideoDashboard.style.display = "block";
+  }
+  if (liveVideoCamera) {
+    liveVideoCamera.srcObject = dashboardWebcamStream;
+    liveVideoCamera.style.display = "block";
+  }
+  if (liveImage) liveImage.style.display = "none";
+  if (liveImageCamera) liveImageCamera.style.display = "none";
+  setCameraLiveStreamReady(true);
+  setCameraLiveHint("Webcam máy tính");
+  setDashboardHint("");
+  await Promise.allSettled([liveVideoDashboard?.play?.(), liveVideoCamera?.play?.()]);
+  usingWebcamFallback = true;
+  return true;
+}
+
+async function probeRtspAvailable() {
+  try {
+    const info = await api("/api/camera/stream/info");
+    return (
+      info?.stream_ready === true &&
+      info?.has_live_frame === true &&
+      !info?.error
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function syncDashboardCameraPreview() {
+  rtspStreamReady = await probeRtspAvailable();
+  if (rtspStreamReady) {
+    stopDashboardWebcam();
+    if (liveImage) {
+      liveImage.style.display = "block";
+      liveImage.src = `${RTSP_STREAM_URL}?_t=${Date.now()}`;
+    }
+    if (liveImageCamera) {
+      liveImageCamera.style.display = "block";
+      liveImageCamera.src = `${RTSP_STREAM_URL}?_t=${Date.now()}`;
+    }
+    setCameraLiveStreamReady(true);
+    setCameraLiveHint("RTSP Live");
+    setDashboardHint("");
+    notifyCameraMode("rtsp", "Đang hiển thị RTSP Live.");
+    usingWebcamFallback = false;
+    return;
+  }
+  const host = window.location.hostname || "";
+  const secureLikeLocalhost =
+    window.isSecureContext || host === "localhost" || host === "127.0.0.1";
+  if (!secureLikeLocalhost) {
+    if (liveImage) liveImage.style.display = "none";
+    if (liveImageCamera) liveImageCamera.style.display = "none";
+    if (liveVideoDashboard) liveVideoDashboard.style.display = "none";
+    if (liveVideoCamera) liveVideoCamera.style.display = "none";
+    setDashboardHint("Không thể mở webcam trên kết nối không bảo mật. Hãy mở bằng http://localhost:5500.");
+    setCameraLiveHint("Không thể mở webcam (không bảo mật).");
+    appendLog("Webcam fallback bị chặn do context không bảo mật (không phải localhost/https).");
+    setCameraLiveStreamReady(false);
+    notifyCameraMode(
+      "insecure",
+      "Không thể mở webcam trên kết nối không bảo mật. Hãy mở bằng http://localhost:5500.",
+      "error"
+    );
+    return;
+  }
+  try {
+    if (usingWebcamFallback && dashboardWebcamStream) {
+      if (liveImage) liveImage.style.display = "none";
+      if (liveImageCamera) liveImageCamera.style.display = "none";
+      if (liveVideoDashboard) liveVideoDashboard.style.display = "block";
+      if (liveVideoCamera) liveVideoCamera.style.display = "block";
+      setCameraLiveStreamReady(true);
+      setCameraLiveHint("Webcam máy tính");
+      setDashboardHint("");
+      return;
+    }
+    const webcamReady = await startDashboardWebcam();
+    if (!webcamReady) {
+      if (liveImage) liveImage.style.display = "none";
+      if (liveImageCamera) liveImageCamera.style.display = "none";
+      setDashboardHint("Không truy cập được webcam máy tính.");
+      setCameraLiveHint("Không truy cập được webcam máy tính.");
+      setCameraLiveStreamReady(false);
+      notifyCameraMode("webcam-error", "Không tìm thấy RTSP và không truy cập được webcam.", "error");
+    } else {
+      appendLog("RTSP chưa sẵn sàng, đang dùng webcam máy tính.");
+      notifyCameraMode("webcam", "RTSP chưa sẵn sàng, đang hiển thị webcam máy tính.");
+    }
+  } catch (err) {
+    if (liveImage) liveImage.style.display = "none";
+    if (liveImageCamera) liveImageCamera.style.display = "none";
+    if (liveVideoDashboard) liveVideoDashboard.style.display = "none";
+    if (liveVideoCamera) liveVideoCamera.style.display = "none";
+    setDashboardHint("Webcam bị chặn. Hãy cho phép quyền camera cho trình duyệt.");
+    setCameraLiveHint("Webcam bị chặn. Hãy cho phép quyền camera.");
+    setCameraLiveStreamReady(false);
+    notifyCameraMode("webcam-blocked", `Không mở được webcam: ${err.message}`, "error");
+  }
+}
+
+function downloadWebcamSnapshot() {
+  if (!liveVideoDashboard || !liveVideoDashboard.videoWidth || !liveVideoDashboard.videoHeight) {
+    throw new Error("Webcam chưa sẵn sàng.");
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = liveVideoDashboard.videoWidth;
+  canvas.height = liveVideoDashboard.videoHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Không tạo được ảnh từ webcam.");
+  }
+  ctx.drawImage(liveVideoDashboard, 0, 0, canvas.width, canvas.height);
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/jpeg", 0.92);
+  a.download = `webcam_${Date.now()}.jpg`;
+  a.click();
+}
+
+function captureWebcamBlob() {
+  if (!liveVideoDashboard || !liveVideoDashboard.videoWidth || !liveVideoDashboard.videoHeight) {
+    throw new Error("Webcam chưa sẵn sàng.");
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = liveVideoDashboard.videoWidth;
+  canvas.height = liveVideoDashboard.videoHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Không tạo được ảnh từ webcam.");
+  }
+  ctx.drawImage(liveVideoDashboard, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Không tạo được blob ảnh webcam."));
+          return;
+        }
+        resolve(blob);
+      },
+      "image/jpeg",
+      0.92
+    );
+  });
+}
+
+async function runDetectFromBlob(imageBlob) {
+  const form = new FormData();
+  form.append("file", imageBlob, `capture_${Date.now()}.jpg`);
+  const res = await fetch(`${API}/api/camera/detect`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text || `HTTP ${res.status}`;
+    try {
+      const parsed = JSON.parse(text || "{}");
+      if (parsed && typeof parsed.detail === "string" && parsed.detail.trim()) {
+        msg = parsed.detail.trim();
+      }
+    } catch {
+      // keep text fallback
+    }
+    throw new Error(msg);
+  }
+  const out = await res.json();
+  if (out?.image_data_url) {
+    if (liveImage) {
+      liveImage.src = out.image_data_url;
+      liveImage.style.display = "block";
+    }
+    if (liveImageCamera) {
+      liveImageCamera.src = out.image_data_url;
+      liveImageCamera.style.display = "block";
+    }
+    if (liveVideoDashboard) liveVideoDashboard.style.display = "none";
+    if (liveVideoCamera) liveVideoCamera.style.display = "none";
+  }
+  setAnalysisFromDisease({
+    label: out?.top_disease || "Không phát hiện",
+    severity: getSeverity(out?.top_disease || ""),
+  });
+  const n = Number(out?.num_detections || 0);
+  showToast(`Đã chụp và detect: ${n} bbox`, "success");
+  appendLog(`Detect ảnh chụp: ${out?.top_disease || "Không phát hiện"} (${n} bbox).`);
+}
+
 /** Khi đổi tab (ví dụ sang PTZ) cần gán lại preview nếu đang dùng dataset. */
 function resyncPtzPreview() {
   if (!liveImagePtz) return;
   if (cameraSource === "rtsp") {
+    if (!rtspStreamReady) return;
     setPtzPreviewReady(false);
     liveImagePtz.onload = () => setPtzPreviewReady(true);
     liveImagePtz.onerror = () => setPtzPreviewReady(false);
@@ -722,16 +964,21 @@ document.querySelectorAll("[data-ptz]").forEach((btn) => {
 });
 
 $("btnCapture")?.addEventListener("click", async () => {
-  if (cameraSource === "rtsp") {
-    const a = document.createElement("a");
-    a.href = RTSP_SNAPSHOT_URL;
-    a.download = `rtsp_${Date.now()}.jpg`;
-    a.click();
-    showToast("Đã lưu ảnh từ luồng RTSP");
-    return;
+  try {
+    let imageBlob;
+    if (rtspStreamReady) {
+      const res = await fetch(`${RTSP_SNAPSHOT_URL}?_t=${Date.now()}`);
+      if (!res.ok) {
+        throw new Error("Không lấy được snapshot RTSP.");
+      }
+      imageBlob = await res.blob();
+    } else {
+      imageBlob = await captureWebcamBlob();
+    }
+    await runDetectFromBlob(imageBlob);
+  } catch (err) {
+    showToast(`Chụp/detect thất bại: ${err.message}`, "error");
   }
-  await refreshFrame();
-  showToast("Đã lấy khung hình mới");
 });
 
 $("btnBurstCapture")?.addEventListener("click", async () => {
@@ -832,7 +1079,7 @@ document.querySelectorAll("[data-step-target]").forEach((btn) => {
 });
 
 $("btnSave")?.addEventListener("click", () => {
-  if (cameraSource === "rtsp") {
+  if (rtspStreamReady) {
     const a = document.createElement("a");
     a.href = RTSP_SNAPSHOT_URL;
     a.download = `rtsp_${Date.now()}.jpg`;
@@ -840,21 +1087,12 @@ $("btnSave")?.addEventListener("click", () => {
     showToast("Đã tải ảnh RTSP");
     return;
   }
-  if (!liveImage?.src) return;
-  const a = document.createElement("a");
-  a.href = liveImage.src;
-  a.download = `frame_${Date.now()}.jpg`;
-  a.click();
-  showToast("Đã tải ảnh có bounding box");
-});
-
-$("btnYolo")?.addEventListener("click", async () => {
-  if (cameraSource === "rtsp") {
-    showToast("Chuyển sang Dataset YOLO để phân tích có bbox.", "error");
-    return;
+  try {
+    downloadWebcamSnapshot();
+    showToast("Đã tải ảnh webcam");
+  } catch (err) {
+    showToast(`Không tải được ảnh webcam: ${err.message}`, "error");
   }
-  await refreshFrame();
-  showToast("Đã phân tích YOLOv8 từ dataset");
 });
 
 $("btnHandleNow")?.addEventListener("click", async () => {
@@ -921,7 +1159,7 @@ async function bootstrap() {
   await refreshSensors();
   try {
     const info = await api("/api/camera/stream/info");
-    rtspStreamReady = info.stream_ready === true;
+    rtspStreamReady = info.stream_ready === true && info.has_live_frame === true;
     const enableRtsp = rtspStreamReady;
     [cameraSourceSelect, cameraSourceSelectCamera].forEach((sel) => {
       if (!sel) return;
@@ -938,12 +1176,9 @@ async function bootstrap() {
     rtspStreamReady = false;
     // API stream/info lỗi — giữ RTSP disabled
   }
-  syncCameraSourceUi();
-  if (rtspStreamReady) {
-    await applyCameraSource("rtsp");
-  } else {
-    await refreshFrame();
-  }
+  // Dashboard chỉ hiển thị camera: RTSP nếu có, không thì webcam máy tính.
+  await applyCameraSource("rtsp");
+  await syncDashboardCameraPreview();
   await refreshLogs();
   await refreshScheduleStatus();
   if (scheduleAtInput) {
@@ -956,13 +1191,18 @@ async function bootstrap() {
       scheduleAtInput.min = nextMin;
     });
   }
-  frameTimer = setInterval(refreshFrame, 5000);
+  // Không dò RTSP theo chu kỳ; nếu thiếu RTSP thì giữ webcam chạy liên tục.
+  frameTimer = null;
   sensorTimer = setInterval(refreshSensors, 3000);
   scheduleStatusTimer = setInterval(refreshScheduleStatus, 4000);
   setInterval(refreshLogs, 7000);
 }
 
 bootstrap();
+
+window.addEventListener("beforeunload", () => {
+  stopDashboardWebcam();
+});
 
 window.addEventListener("resize", () => {
   trendChart?.resize();
