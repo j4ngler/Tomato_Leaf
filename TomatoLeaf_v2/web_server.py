@@ -3,6 +3,8 @@ import os
 import random
 import threading
 import time
+import base64
+import sys
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +23,9 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT_DIR = Path(__file__).resolve().parent
 WEB_UI_DIR = ROOT_DIR / "web_ui"
 DATASET_DIR = ROOT_DIR.parent / "dataset_detection"
+PROJECT_ROOT = ROOT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def _load_dotenv_if_present(path: Path) -> None:
@@ -161,6 +166,16 @@ except Exception:
     cv2 = None  # type: ignore[misc, assignment]
     CV2_AVAILABLE = False
 
+try:
+    from ultralytics import YOLO
+
+    YOLO_AVAILABLE = True
+    YOLO_IMPORT_ERROR = ""
+except Exception:
+    YOLO = None  # type: ignore[assignment]
+    YOLO_AVAILABLE = False
+    YOLO_IMPORT_ERROR = str(sys.exc_info()[1] or "unknown import error")
+
 
 def _jpeg_placeholder_bytes() -> bytes:
     buf = io.BytesIO()
@@ -202,6 +217,7 @@ class RtspStreamManager:
         self.lock = threading.Lock()
         self._placeholder = _jpeg_placeholder_bytes()
         self.last_jpeg: bytes = self._placeholder
+        self.has_live_frame = False
         self.error: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -236,6 +252,7 @@ class RtspStreamManager:
             if not cap.isOpened():
                 with self.lock:
                     self.error = "Không mở được luồng RTSP."
+                    self.has_live_frame = False
                 time.sleep(min(backoff, 5.0))
                 backoff = min(backoff * 1.5, 5.0)
                 continue
@@ -251,6 +268,7 @@ class RtspStreamManager:
                 if not ok or frame is None:
                     with self.lock:
                         self.error = "Mất frame từ RTSP."
+                        self.has_live_frame = False
                     break
                 enc_ok, buf = cv2.imencode(
                     ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82]
@@ -258,12 +276,115 @@ class RtspStreamManager:
                 if enc_ok:
                     with self.lock:
                         self.last_jpeg = buf.tobytes()
+                        self.has_live_frame = True
                 time.sleep(0.033)
             cap.release()
             time.sleep(0.5)
 
 
 rtsp_stream = RtspStreamManager()
+
+
+def _resolve_detector_checkpoint() -> Path:
+    direct = (os.getenv("YOLO_MODEL_PATH") or os.getenv("DETECTOR_MODEL_PATH") or "").strip()
+    if direct:
+        p = Path(direct)
+        if not p.is_absolute():
+            p = (ROOT_DIR.parent / p).resolve()
+        return p
+    candidate_in_module = (ROOT_DIR / "models" / "best.pt").resolve()
+    if candidate_in_module.exists():
+        return candidate_in_module
+    return (ROOT_DIR.parent / "best.pt").resolve()
+
+
+class DetectionEngine:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._model = None
+        self._class_names = list(CLASS_NAMES.values())
+        self._loaded_ckpt: Path | None = None
+        self._error: str | None = None
+
+    @property
+    def available(self) -> bool:
+        return YOLO_AVAILABLE
+
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    def _load_if_needed(self) -> None:
+        if self._model is not None:
+            return
+        if not YOLO_AVAILABLE or YOLO is None:
+            self._error = (
+                "Thiếu thư viện ultralytics để chạy YOLO."
+                + (f" ({YOLO_IMPORT_ERROR})" if YOLO_IMPORT_ERROR else "")
+            )
+            raise HTTPException(status_code=503, detail=self._error)
+
+        ckpt_path = _resolve_detector_checkpoint()
+        if not ckpt_path.exists():
+            self._error = f"Không tìm thấy model detect tại: {ckpt_path}"
+            raise HTTPException(status_code=503, detail=self._error)
+
+        model = YOLO(str(ckpt_path))
+        names = getattr(model, "names", None)
+        if isinstance(names, dict) and names:
+            self._class_names = [str(names[k]).replace("_", " ") for k in sorted(names.keys())]
+        elif isinstance(names, list) and names:
+            self._class_names = [str(x).replace("_", " ") for x in names]
+        else:
+            self._class_names = list(CLASS_NAMES.values())
+        self._model = model
+        self._loaded_ckpt = ckpt_path
+        self._error = None
+        state.log(f"Đã nạp model YOLO detect: {ckpt_path.name}")
+
+    def predict(self, img: Image.Image, conf_threshold: float = 0.35) -> tuple[bytes, list[dict[str, Any]], str]:
+        with self._lock:
+            self._load_if_needed()
+            assert self._model is not None
+            result = self._model.predict(img, conf=conf_threshold, verbose=False)[0]
+
+        detections: list[dict[str, Any]] = []
+        draw = ImageDraw.Draw(img)
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None:
+            for i in range(len(boxes)):
+                score = float(boxes.conf[i].item())
+                label_idx = int(boxes.cls[i].item())
+                name = (
+                    self._class_names[label_idx]
+                    if 0 <= label_idx < len(self._class_names)
+                    else f"Class {label_idx}"
+                )
+                x1, y1, x2, y2 = [float(v) for v in boxes.xyxy[i].tolist()]
+                color = (37, 99, 235) if "Virus" not in name else (220, 38, 38)
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+                label_text = f"{name} {score:.2f}"
+                text_y = max(0.0, y1 - 26)
+                text_bbox = draw.textbbox((x1 + 6, text_y + 4), label_text, font=VI_FONT)
+                draw.rectangle([x1, text_y, text_bbox[2] + 8, text_bbox[3] + 4], fill=color)
+                draw.text((x1 + 6, text_y + 4), label_text, fill=(255, 255, 255), font=VI_FONT)
+                detections.append(
+                    {
+                        "class_id": label_idx,
+                        "name": name,
+                        "confidence": round(score, 4),
+                        "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
+                    }
+                )
+
+        detections.sort(key=lambda x: float(x["confidence"]), reverse=True)
+        top = detections[0]["name"] if detections else "Không phát hiện"
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        return buf.getvalue(), detections, top
+
+
+detector = DetectionEngine()
 
 
 def _scan_dataset_split(split: str) -> list[FrameItem]:
@@ -373,16 +494,27 @@ def _capture_rtsp_frame() -> tuple[bytes, str]:
     return data, "rtsp"
 
 
-def _save_capture(data: bytes, prefix: str) -> str:
+def _save_capture(data: bytes, prefix: str, subdir: str | None = None) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_prefix = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in prefix)[:60]
     filename = f"{safe_prefix}_{ts}.jpg"
-    path = state.capture_dir / filename
+    folder = state.capture_dir
+    if subdir:
+        folder = folder / subdir
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / filename
     path.write_bytes(data)
-    return filename
+    # Trả về đường dẫn tương đối so với captures để UI/API dễ phân biệt nhóm ảnh.
+    return str(path.relative_to(state.capture_dir))
 
 
-def _run_burst_capture(count: int, interval_sec: float, source: str, split: str) -> list[str]:
+def _run_burst_capture(
+    count: int,
+    interval_sec: float,
+    source: str,
+    split: str,
+    save_subdir: str | None = None,
+) -> list[str]:
     out: list[str] = []
     source_key = source.lower().strip()
     for i in range(count):
@@ -392,7 +524,7 @@ def _run_burst_capture(count: int, interval_sec: float, source: str, split: str)
             data, prefix = _capture_dataset_frame(split)
         else:
             raise HTTPException(status_code=400, detail="source phải là 'rtsp' hoặc 'dataset'.")
-        out.append(_save_capture(data, prefix))
+        out.append(_save_capture(data, prefix, subdir=save_subdir))
         if i < count - 1:
             time.sleep(interval_sec)
     return out
@@ -418,12 +550,14 @@ def _schedule_runner(job: dict[str, Any]) -> None:
             interval_sec=float(job["interval_sec"]),
             source=str(job["source"]),
             split=str(job["split"]),
+            save_subdir=str(job.get("save_subdir") or "schedule"),
         )
         with state.schedule_lock:
             if state.schedule_job and state.schedule_job.get("id") == job["id"]:
                 state.schedule_job["status"] = "done"
                 state.schedule_job["completed_at"] = datetime.now().isoformat(timespec="seconds")
                 state.schedule_job["captured_files"] = files
+                state.schedule_job["saved_dir"] = str(state.capture_dir / str(job.get("save_subdir") or "schedule"))
         state.log(
             f"Hẹn giờ chụp hoàn tất: {len(files)} ảnh ({job['source']}, mỗi {job['interval_sec']}s)."
         )
@@ -518,10 +652,35 @@ def camera_stream_info() -> dict[str, Any]:
         "rtsp_configured": bool(rtsp_stream.url),
         "opencv_available": CV2_AVAILABLE,
         "stream_ready": rtsp_stream.enabled,
+        "has_live_frame": rtsp_stream.has_live_frame,
         "stream_url": "/api/camera/rtsp/stream.mjpg" if rtsp_stream.enabled else None,
         "snapshot_url": "/api/camera/rtsp/snapshot.jpg" if rtsp_stream.enabled else None,
         "masked_rtsp": RtspStreamManager._mask_url(rtsp_stream.url) if rtsp_stream.url else "",
         "error": rtsp_stream.error,
+    }
+
+
+@app.post("/api/camera/detect")
+async def camera_detect(file: UploadFile = File(...)) -> dict[str, Any]:
+    if file.content_type is None or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File detect phải là ảnh.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Ảnh rỗng.")
+    try:
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Không đọc được ảnh: {exc}") from exc
+
+    conf = float(os.getenv("DETECT_CONF", "0.35"))
+    annotated, detections, top = detector.predict(img, conf_threshold=conf)
+    data_url = "data:image/jpeg;base64," + base64.b64encode(annotated).decode("ascii")
+    state.log(f"Detect ảnh chụp => {top} ({len(detections)} bbox)")
+    return {
+        "top_disease": top,
+        "num_detections": len(detections),
+        "detections": detections,
+        "image_data_url": data_url,
     }
 
 
@@ -574,6 +733,7 @@ def camera_capture_burst(payload: CaptureBurstPayload) -> dict[str, Any]:
         interval_sec=payload.interval_sec,
         source=source,
         split=split,
+        save_subdir="burst",
     )
     state.log(
         f"Chụp liên tiếp: {len(files)} ảnh ({source}, mỗi {payload.interval_sec}s)."
@@ -584,7 +744,7 @@ def camera_capture_burst(payload: CaptureBurstPayload) -> dict[str, Any]:
         "interval_sec": payload.interval_sec,
         "source": source,
         "split": split,
-        "saved_dir": str(state.capture_dir),
+        "saved_dir": str(state.capture_dir / "burst"),
         "files": files,
     }
 
@@ -604,6 +764,8 @@ def camera_capture_schedule(payload: CaptureSchedulePayload) -> dict[str, Any]:
     if source == "dataset" and split not in state.items_by_split:
         raise HTTPException(status_code=400, detail=f"split không hợp lệ: {split}")
 
+    schedule_count = 1  # Hẹn giờ luôn chụp đúng 1 ảnh để tránh nhầm với burst.
+
     with state.schedule_lock:
         old = state.schedule_job
         if old and old.get("status") == "scheduled":
@@ -614,20 +776,22 @@ def camera_capture_schedule(payload: CaptureSchedulePayload) -> dict[str, Any]:
             "status": "scheduled",
             "run_at": run_at.isoformat(timespec="seconds"),
             "run_at_dt": run_at,
-            "count": payload.count,
+            "count": schedule_count,
             "interval_sec": payload.interval_sec,
             "source": source,
             "split": split,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "captured_files": [],
             "error": None,
+            "save_subdir": f"schedule/{job_id}",
+            "saved_dir": str(state.capture_dir / f"schedule/{job_id}"),
         }
         state.schedule_job = job
         t = threading.Thread(target=_schedule_runner, args=(job,), daemon=True, name=f"capture-{job_id}")
         t.start()
 
     state.log(
-        f"Đã hẹn chụp lúc {job['run_at']}: {payload.count} ảnh ({source}, mỗi {payload.interval_sec}s)."
+        f"Đã hẹn chụp lúc {job['run_at']}: {schedule_count} ảnh ({source})."
     )
     return {
         "ok": True,
@@ -656,7 +820,7 @@ def camera_capture_schedule_status() -> dict[str, Any]:
             "completed_at": job.get("completed_at"),
             "error": job.get("error"),
             "captured_files": job.get("captured_files", []),
-            "saved_dir": str(state.capture_dir),
+            "saved_dir": job.get("saved_dir", str(state.capture_dir / "schedule")),
         }
 
 

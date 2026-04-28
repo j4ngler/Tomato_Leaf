@@ -116,30 +116,26 @@
               <h3><i class="ri-camera-lens-line" aria-hidden="true"></i>Camera &amp; phân tích YOLOv8</h3>
               <span class="tag status-online"><i aria-hidden="true"></i>Trực tuyến</span>
             </div>
-            <div class="video-tools">
-              <label>
-                Nguồn:
-                <select id="cameraSourceSelect" title="Dataset có bbox YOLO hoặc luồng RTSP">
-                  <option value="dataset">Dataset YOLO</option>
-                  <option value="rtsp" disabled>RTSP (chưa cấu hình)</option>
-                </select>
-              </label>
-              <label class="video-tools-split">
-                Split:
-                <select id="splitSelect">
-                  <option value="train">Dữ liệu huấn luyện</option>
-                  <option value="valid">Dữ liệu kiểm định</option>
-                  <option value="test">Dữ liệu kiểm tra</option>
-                </select>
-              </label>
-              <span id="frameName" class="tag tag--muted">--</span>
-            </div>
-            <div class="video-frame">
+            <div class="video-frame video-frame--camera-live">
               <img
                 id="liveImage"
                 src=""
                 alt="Luồng camera với bounding box"
               />
+              <video
+                id="liveVideoDashboard"
+                class="camera-live-video"
+                autoplay
+                muted
+                playsinline
+                style="display: none"
+              ></video>
+              <div
+                id="dashboardCameraFallbackHint"
+                class="camera-live-placeholder"
+                style="display: none"
+                aria-live="polite"
+              ></div>
             </div>
             <div class="action-row">
               <button type="button" class="primary" id="btnCapture">
@@ -149,10 +145,6 @@
               <button type="button" class="secondary secondary--outline" id="btnSave">
                 <span class="btn-ic" aria-hidden="true"><i class="ri-download-2-line"></i></span>
                 Lưu ảnh
-              </button>
-              <button type="button" class="primary primary--accent" id="btnYolo">
-                <span class="btn-ic" aria-hidden="true"><i class="ri-search-eye-line"></i></span>
-                Phân tích YOLOv8
               </button>
             </div>
             <p class="result-text">
@@ -289,24 +281,6 @@
               <h3>📹 Camera Live</h3>
               <span class="tag status-online"><i aria-hidden="true"></i>Trực tuyến</span>
             </div>
-            <div class="video-tools">
-              <label>
-                Nguồn:
-                <select id="cameraSourceSelectCamera" title="Dataset hoặc RTSP">
-                  <option value="dataset">Dataset YOLO</option>
-                  <option value="rtsp" disabled>RTSP (chưa cấu hình)</option>
-                </select>
-              </label>
-              <label class="video-tools-split">
-                Split:
-                <select id="splitSelectCamera">
-                  <option value="train">Dữ liệu huấn luyện</option>
-                  <option value="valid">Dữ liệu kiểm định</option>
-                  <option value="test">Dữ liệu kiểm tra</option>
-                </select>
-              </label>
-              <span id="frameNameCamera" class="tag tag--muted">--</span>
-            </div>
             <div id="cameraLiveFrame" class="video-frame video-frame--camera-live">
               <div id="cameraLivePlaceholder" class="camera-live-placeholder" aria-live="polite">
                 Kết nối camera…
@@ -317,6 +291,14 @@
                 src=""
                 alt="Luồng camera"
               />
+              <video
+                id="liveVideoCamera"
+                class="camera-live-img"
+                autoplay
+                muted
+                playsinline
+                style="display: none"
+              ></video>
             </div>
             <p class="result-text">
               Kết quả hiện tại:
