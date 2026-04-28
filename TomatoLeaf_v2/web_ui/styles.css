@@ -405,6 +405,7 @@ body {
 }
 
 .video-frame {
+  position: relative;
   border-radius: var(--radius);
   overflow: hidden;
   margin: 12px 0;
@@ -450,10 +451,33 @@ body {
   background: rgba(148, 163, 184, 0.08);
 }
 
+.video-frame video {
+  width: 100%;
+  height: clamp(200px, 24vw, 270px);
+  object-fit: cover;
+  object-position: center;
+  display: block;
+  background: rgba(15, 23, 42, 0.65);
+}
+
 .video-frame--camera-live {
   position: relative;
   min-height: clamp(200px, 28vw, 300px);
   background: rgba(15, 23, 42, 0.55);
+}
+
+.video-frame--camera-live img,
+.video-frame--camera-live video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.video-frame--camera-live video {
+  z-index: 3;
 }
 
 .camera-live-placeholder {
